@@ -1,8 +1,5 @@
 const supabase = require("../config/supabase");
 
-const PRODUCT_FIELDS =
-  "id, name, price, discount_price, images, movement_type, case_material, sku";
-
 // GET /api/wishlist
 async function getWishlist(req, res, next) {
   try {
@@ -10,21 +7,22 @@ async function getWishlist(req, res, next) {
 
     const { data, error } = await supabase
       .from("wishlist_items")
-      .select(`*, product:products(${PRODUCT_FIELDS})`)
+      .select("*, product:products(*)")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error('[wishlist] getWishlist error:', error);
+      console.error("[wishlist] getWishlist error:", error);
       throw error;
     }
+
     res.json({ items: data ?? [] });
   } catch (err) {
     next(err);
   }
 }
 
-// POST /api/wishlist
+// POST /api/wishlist   body: { product_id }
 async function addToWishlist(req, res, next) {
   try {
     const userId = req.user.id;
@@ -34,17 +32,33 @@ async function addToWishlist(req, res, next) {
       return res.status(400).json({ error: "product_id is required" });
     }
 
-    // upsert: safe to call even if already wishlisted
-    const { data, error } = await supabase
+    // Upsert — safe to call even when already wishlisted
+    const { error: upsertError } = await supabase
       .from("wishlist_items")
-      .upsert({ user_id: userId, product_id }, { onConflict: "user_id,product_id" })
-      .select(`*, product:products(${PRODUCT_FIELDS})`)
+      .upsert(
+        { user_id: userId, product_id },
+        { onConflict: "user_id,product_id", ignoreDuplicates: true },
+      );
+
+    if (upsertError) {
+      console.error("[wishlist] upsert error:", upsertError);
+      throw upsertError;
+    }
+
+    // Fetch the full row with product details
+    const { data, error: selectError } = await supabase
+      .from("wishlist_items")
+      .select("*, product:products(*)")
+      .eq("user_id", userId)
+      .eq("product_id", product_id)
       .single();
 
-    // PGRST116 = no row returned (duplicate ignored) — that's fine
-    if (error && error.code !== "PGRST116") throw error;
+    if (selectError) {
+      console.error("[wishlist] select error:", selectError);
+      throw selectError;
+    }
 
-    res.status(201).json(data ?? {});
+    res.status(201).json(data);
   } catch (err) {
     next(err);
   }
@@ -62,7 +76,11 @@ async function removeFromWishlist(req, res, next) {
       .eq("user_id", userId)
       .eq("product_id", productId);
 
-    if (error) throw error;
+    if (error) {
+      console.error("[wishlist] delete error:", error);
+      throw error;
+    }
+
     res.status(204).send();
   } catch (err) {
     next(err);

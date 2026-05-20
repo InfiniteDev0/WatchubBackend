@@ -6,6 +6,7 @@ const {
   removeFromWishlist,
 } = require("../controllers/wishlist.controller");
 
+// All wishlist endpoints require a logged-in user
 router.use(authenticate);
 
 router.get("/", getWishlist);
