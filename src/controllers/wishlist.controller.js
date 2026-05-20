@@ -14,7 +14,10 @@ async function getWishlist(req, res, next) {
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[wishlist] getWishlist error:', error);
+      throw error;
+    }
     res.json({ items: data ?? [] });
   } catch (err) {
     next(err);
