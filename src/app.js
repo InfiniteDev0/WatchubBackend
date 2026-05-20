@@ -35,6 +35,8 @@ app.use("/api/brands", require("./routes/brand.routes"));
 app.use("/api/products", require("./routes/product.routes"));
 app.use("/api/cart", require("./routes/cart.routes"));
 app.use("/api/orders", require("./routes/order.routes"));
+app.use("/api/reviews", require("./routes/review.routes"));
+app.use("/api/contact", require("./routes/contact.routes"));
 app.use("/api/wishlist", require("./routes/wishlist.routes"));
 // /api/upload removed — files upload directly to Supabase Storage from browser
 
