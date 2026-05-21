@@ -38,6 +38,7 @@ app.use("/api/orders", require("./routes/order.routes"));
 app.use("/api/reviews", require("./routes/review.routes"));
 app.use("/api/contact", require("./routes/contact.routes"));
 app.use("/api/wishlist", require("./routes/wishlist.routes"));
+app.use("/api/admin", require("./routes/admin.routes"));
 // /api/upload removed — files upload directly to Supabase Storage from browser
 
 // ── 404 Handler ───────────────────────────────────────────────────
