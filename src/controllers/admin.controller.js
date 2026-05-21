@@ -1,5 +1,20 @@
 const supabase = require("../config/supabase");
 
+// ── helpers ──────────────────────────────────────────────────────
+// Resolve a set of user_ids → { id: full_name } map using the profiles table.
+async function fetchProfileMap(userIds) {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .in("id", ids);
+  if (error) throw error;
+  const map = {};
+  for (const p of data ?? []) map[p.id] = p.full_name;
+  return map;
+}
+
 // ── GET /api/admin/stats ──────────────────────────────────────────
 async function getStats(req, res, next) {
   try {
@@ -27,8 +42,6 @@ async function getStats(req, res, next) {
 }
 
 // ── GET /api/admin/orders ─────────────────────────────────────────
-// Lists every order with the customer's name and email.
-// Query params: status, page, limit
 async function listAllOrders(req, res, next) {
   try {
     const { status, page = 1, limit = 50 } = req.query;
@@ -40,7 +53,7 @@ async function listAllOrders(req, res, next) {
     let query = supabase
       .from("orders")
       .select(
-        "id, status, total, created_at, updated_at, shipping_address, profiles(id, full_name)",
+        "id, user_id, status, total, created_at, updated_at, shipping_address",
         { count: "exact" }
       )
       .order("created_at", { ascending: false })
@@ -51,11 +64,12 @@ async function listAllOrders(req, res, next) {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    const orders = data.map((o) => ({
+    const profileMap = await fetchProfileMap((data ?? []).map((o) => o.user_id));
+
+    const orders = (data ?? []).map((o) => ({
       ...o,
-      customer_name: o.profiles?.full_name ?? "Unknown",
-      customer_id: o.profiles?.id ?? null,
-      profiles: undefined,
+      customer_name: profileMap[o.user_id] ?? "Unknown",
+      customer_id: o.user_id,
     }));
 
     res.json({
@@ -77,7 +91,7 @@ async function getAdminOrder(req, res, next) {
     const { data, error } = await supabase
       .from("orders")
       .select(
-        "*, order_items(id, product_id, quantity, price_at_purchase, product_name, product_image), profiles(id, full_name)"
+        "*, order_items(id, product_id, quantity, price_at_purchase, product_name, product_image)"
       )
       .eq("id", req.params.id)
       .single();
@@ -85,11 +99,12 @@ async function getAdminOrder(req, res, next) {
     if (error || !data)
       return res.status(404).json({ error: "Order not found" });
 
+    const profileMap = await fetchProfileMap([data.user_id]);
+
     res.json({
       ...data,
-      customer_name: data.profiles?.full_name ?? "Unknown",
-      customer_id: data.profiles?.id ?? null,
-      profiles: undefined,
+      customer_name: profileMap[data.user_id] ?? "Unknown",
+      customer_id: data.user_id,
     });
   } catch (err) {
     next(err);
@@ -116,14 +131,19 @@ async function updateOrderStatus(req, res, next) {
 
     if (error || !data)
       return res.status(404).json({ error: "Order not found" });
-    res.json(data);
+
+    const profileMap = await fetchProfileMap([data.user_id]);
+    res.json({
+      ...data,
+      customer_name: profileMap[data.user_id] ?? "Unknown",
+      customer_id: data.user_id,
+    });
   } catch (err) {
     next(err);
   }
 }
 
 // ── GET /api/admin/reviews ────────────────────────────────────────
-// Lists all reviews across all products with user + product info.
 async function listAllReviews(req, res, next) {
   try {
     const { page = 1, limit = 50 } = req.query;
@@ -135,7 +155,7 @@ async function listAllReviews(req, res, next) {
     const { data, error, count } = await supabase
       .from("reviews")
       .select(
-        "id, rating, title, body, created_at, user_id, product_id, profiles(full_name), products(name)",
+        "id, rating, title, body, created_at, user_id, product_id",
         { count: "exact" }
       )
       .order("created_at", { ascending: false })
@@ -143,7 +163,21 @@ async function listAllReviews(req, res, next) {
 
     if (error) throw error;
 
-    const reviews = data.map((r) => ({
+    const rows = data ?? [];
+    const userIds = rows.map((r) => r.user_id);
+    const productIds = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
+
+    const [profileMap, productsRes] = await Promise.all([
+      fetchProfileMap(userIds),
+      productIds.length
+        ? supabase.from("products").select("id, name").in("id", productIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const productMap = {};
+    for (const p of productsRes.data ?? []) productMap[p.id] = p.name;
+
+    const reviews = rows.map((r) => ({
       id: r.id,
       rating: r.rating,
       title: r.title,
@@ -151,8 +185,8 @@ async function listAllReviews(req, res, next) {
       created_at: r.created_at,
       user_id: r.user_id,
       product_id: r.product_id,
-      user_name: r.profiles?.full_name ?? "Anonymous",
-      product_name: r.products?.name ?? "Unknown Product",
+      user_name: profileMap[r.user_id] ?? "Anonymous",
+      product_name: productMap[r.product_id] ?? "Unknown Product",
     }));
 
     res.json({
@@ -182,6 +216,73 @@ async function deleteAdminReview(req, res, next) {
   }
 }
 
+// ── GET /api/admin/messages ──────────────────────────────────────
+// Lists every contact_messages row (user-submitted feedback / issue reports).
+async function listAllMessages(req, res, next) {
+  try {
+    const { page = 1, limit = 50, is_read } = req.query;
+    const pageNum = Math.max(1, Number(page));
+    const limitNum = Math.max(1, Math.min(100, Number(limit)));
+    const from = (pageNum - 1) * limitNum;
+    const to = from + limitNum - 1;
+
+    let query = supabase
+      .from("contact_messages")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (is_read === "true") query = query.eq("is_read", true);
+    if (is_read === "false") query = query.eq("is_read", false);
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    res.json({
+      messages: data ?? [],
+      pagination: {
+        total: count ?? 0,
+        page: pageNum,
+        pages: Math.ceil((count ?? 0) / limitNum) || 1,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── PATCH /api/admin/messages/:id ────────────────────────────────
+async function updateMessage(req, res, next) {
+  try {
+    const { is_read } = req.body;
+    const { data, error } = await supabase
+      .from("contact_messages")
+      .update({ is_read: !!is_read })
+      .eq("id", req.params.id)
+      .select()
+      .single();
+    if (error || !data)
+      return res.status(404).json({ error: "Message not found" });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── DELETE /api/admin/messages/:id ───────────────────────────────
+async function deleteMessage(req, res, next) {
+  try {
+    const { error } = await supabase
+      .from("contact_messages")
+      .delete()
+      .eq("id", req.params.id);
+    if (error) throw error;
+    res.json({ message: "Message deleted" });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getStats,
   listAllOrders,
@@ -189,4 +290,7 @@ module.exports = {
   updateOrderStatus,
   listAllReviews,
   deleteAdminReview,
+  listAllMessages,
+  updateMessage,
+  deleteMessage,
 };

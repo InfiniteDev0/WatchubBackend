@@ -8,6 +8,9 @@ const {
   updateOrderStatus,
   listAllReviews,
   deleteAdminReview,
+  listAllMessages,
+  updateMessage,
+  deleteMessage,
 } = require("../controllers/admin.controller");
 
 // All admin routes require authentication + admin role.
@@ -21,5 +24,9 @@ router.patch("/orders/:id/status", updateOrderStatus);
 
 router.get("/reviews", listAllReviews);
 router.delete("/reviews/:id", deleteAdminReview);
+
+router.get("/messages", listAllMessages);
+router.patch("/messages/:id", updateMessage);
+router.delete("/messages/:id", deleteMessage);
 
 module.exports = router;
