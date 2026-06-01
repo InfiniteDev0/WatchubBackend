@@ -117,21 +117,49 @@ const VALID_STATUSES = ["pending", "processing", "shipped", "delivered", "cancel
 async function updateOrderStatus(req, res, next) {
   try {
     const { status } = req.body;
+    const id = req.params.id;
+
     if (!VALID_STATUSES.includes(status))
       return res.status(400).json({
         error: `status must be one of: ${VALID_STATUSES.join(", ")}`,
       });
 
+    // 1. Confirm the order exists. A missing row produces a clear 404 here
+    //    rather than being masked by a generic "no rows affected" error
+    //    when the update is chained with `.single()`.
+    const { data: existing, error: fetchErr } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error("[admin.updateOrderStatus] lookup failed:", fetchErr);
+      return res.status(500).json({ error: fetchErr.message });
+    }
+    if (!existing) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // 2. Apply the update and return the full row + items so the client
+    //    can replace its cached entry without losing the items list.
     const { data, error } = await supabase
       .from("orders")
       .update({ status, updated_at: new Date().toISOString() })
-      .eq("id", req.params.id)
-      .select()
+      .eq("id", id)
+      .select(
+        "*, order_items(id, product_id, quantity, price_at_purchase, product_name, product_image)"
+      )
       .single();
 
-    if (error || !data)
-      return res.status(404).json({ error: "Order not found" });
+    if (error || !data) {
+      console.error("[admin.updateOrderStatus] update failed:", error);
+      return res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to update order" });
+    }
 
+    // 3. Decorate with customer name.
     const profileMap = await fetchProfileMap([data.user_id]);
     res.json({
       ...data,
@@ -139,6 +167,7 @@ async function updateOrderStatus(req, res, next) {
       customer_id: data.user_id,
     });
   } catch (err) {
+    console.error("[admin.updateOrderStatus] unexpected:", err);
     next(err);
   }
 }
