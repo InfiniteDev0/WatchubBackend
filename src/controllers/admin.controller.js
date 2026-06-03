@@ -281,12 +281,34 @@ async function listAllMessages(req, res, next) {
 }
 
 // ── PATCH /api/admin/messages/:id ────────────────────────────────
+// Accepts `is_read` (admin review flag) and/or `reply` (admin response).
+// Sending a non-empty `reply` stamps `replied_at` and resets `user_read`
+// to FALSE so the customer sees the reply as unread.
 async function updateMessage(req, res, next) {
   try {
-    const { is_read } = req.body;
+    const { is_read, reply } = req.body;
+
+    const patch = {};
+    if (is_read !== undefined) patch.is_read = !!is_read;
+    if (reply !== undefined) {
+      const trimmed = typeof reply === "string" ? reply.trim() : "";
+      if (trimmed) {
+        patch.reply = trimmed;
+        patch.replied_at = new Date().toISOString();
+        patch.user_read = false;
+      } else {
+        // Empty reply clears any existing response.
+        patch.reply = null;
+        patch.replied_at = null;
+      }
+    }
+
+    if (Object.keys(patch).length === 0)
+      return res.status(400).json({ error: "Nothing to update" });
+
     const { data, error } = await supabase
       .from("contact_messages")
-      .update({ is_read: !!is_read })
+      .update(patch)
       .eq("id", req.params.id)
       .select()
       .single();

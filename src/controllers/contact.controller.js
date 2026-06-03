@@ -16,4 +16,24 @@ async function submitContact(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submitContact };
+// GET /api/contact/mine — the signed-in user's own feedback + admin replies
+async function getMyMessages(req, res, next) {
+  try {
+    const data = await contactService.getUserMessages(req.user.id);
+    res.json({ messages: data });
+  } catch (err) { next(err); }
+}
+
+// PATCH /api/contact/:id/read — customer marks an admin reply as read
+async function markMyMessageRead(req, res, next) {
+  try {
+    const data = await contactService.markUserMessageRead(
+      req.user.id,
+      req.params.id
+    );
+    if (!data) return res.status(404).json({ error: "Message not found" });
+    res.json(data);
+  } catch (err) { next(err); }
+}
+
+module.exports = { submitContact, getMyMessages, markMyMessageRead };
