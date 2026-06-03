@@ -311,9 +311,15 @@ async function updateMessage(req, res, next) {
       .update(patch)
       .eq("id", req.params.id)
       .select()
-      .single();
-    if (error || !data)
-      return res.status(404).json({ error: "Message not found" });
+      .maybeSingle();
+    // Surface the real DB error (e.g. a missing column before the
+    // reply/replied_at/user_read migration is applied) instead of masking
+    // it as a generic 404.
+    if (error) {
+      console.error("[admin.updateMessage] update failed:", error);
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data) return res.status(404).json({ error: "Message not found" });
     res.json(data);
   } catch (err) {
     next(err);
